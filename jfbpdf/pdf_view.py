@@ -9,16 +9,18 @@ Estrategia para lograr un scroll fluido incluso con documentos grandes:
   * El renderizado ocurre en un hilo de trabajo (:mod:`jfbpdf.renderer`), de
     modo que la interfaz nunca se bloquea.
   * Una caché LRU con presupuesto de memoria evita re-renderizar al volver
-    atrás y libera memoria al alejarse.
+    atrás y libera memoria al alejarse. Las entradas de niveles de zoom
+    recientes se conservan mientras haya presupuesto.
 """
 
 from __future__ import annotations
 
 import bisect
+import logging
 from collections import OrderedDict
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
-from PySide6.QtCore import QEvent, QPoint, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QCursor,
@@ -37,7 +39,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .renderer import PageRenderer
+from .renderer import PageRenderer, RenderKey
+
+logger = logging.getLogger(__name__)
 
 #: Separación vertical entre páginas, en píxeles.
 PAGE_MARGIN = 10
@@ -45,11 +49,20 @@ PAGE_MARGIN = 10
 #: Cuántas páginas por encima/debajo del área visible se prerenderizan.
 BUFFER_PAGES = 2
 
+#: Cuántas páginas fuera del área visible se conservan cacheadas.
+KEEP_PAGES = 6
+
 #: Presupuesto de la caché de páginas, en bytes (aprox. 4 bytes/píxel).
 CACHE_BUDGET_BYTES = 150 * 1024 * 1024
 
 MIN_ZOOM = 0.20
 MAX_ZOOM = 8.0
+
+#: Zoom fijo con el que se renderizan las miniaturas del panel lateral.
+THUMBNAIL_ZOOM = 0.10
+
+#: Prioridad de los pedidos de miniatura (los más bajos se atienden antes).
+THUMBNAIL_PRIORITY = 10_000
 
 #: Intervalo del temporizador de auto-scroll, en milisegundos (~60 fps).
 AUTOSCROLL_INTERVAL_MS = 16
@@ -57,6 +70,25 @@ AUTOSCROLL_INTERVAL_MS = 16
 AUTOSCROLL_DEAD_ZONE = 10
 #: Velocidad máxima de auto-scroll, en píxeles por tick.
 AUTOSCROLL_MAX_SPEED = 40.0
+
+Rect = Tuple[float, float, float, float]
+
+
+def _rotate_rect(rect: Rect, width: float, height: float, rotation: int) -> Rect:
+    """Rota un rect (en puntos, con origen arriba-izquierda) según ``rotation``.
+
+    ``rotation`` es el giro horario aplicado a la vista (0, 90, 180 o 270),
+    el mismo que usa MuPDF al renderizar.
+    """
+    x0, y0, x1, y1 = rect
+    rotation %= 360
+    if rotation == 90:
+        return (height - y1, x0, height - y0, x1)
+    if rotation == 180:
+        return (width - x1, height - y1, width - x0, height - y0)
+    if rotation == 270:
+        return (y0, width - x1, y1, width - x0)
+    return rect
 
 
 class _PageWidget(QWidget):
@@ -66,9 +98,16 @@ class _PageWidget(QWidget):
         super().__init__()
         self._number = number
         self._pixmap: Optional[QPixmap] = None
+        self._page_size_pt: Tuple[float, float] = (1.0, 1.0)
+        self._highlights: List[Rect] = []
+        self._current_highlight = -1
 
     def set_page_size(self, size: QSize) -> None:
         self.setFixedSize(size)
+
+    def set_page_size_pt(self, width: float, height: float) -> None:
+        """Tamaño de la página en puntos (ya rotado)."""
+        self._page_size_pt = (width, height)
 
     def set_pixmap(self, pixmap: QPixmap) -> None:
         self._pixmap = pixmap
@@ -81,10 +120,26 @@ class _PageWidget(QWidget):
     def has_pixmap(self) -> bool:
         return self._pixmap is not None
 
+    def set_highlights(self, rects: List[Rect], current: int = -1) -> None:
+        """Resalta coincidencias de búsqueda (rects en puntos, ya rotados)."""
+        self._highlights = rects
+        self._current_highlight = current
+        self.update()
+
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
         if self._pixmap is not None:
-            painter.drawPixmap(0, 0, self._pixmap)
+            dpr = self._pixmap.devicePixelRatio() or 1.0
+            logical = QSize(
+                round(self._pixmap.width() / dpr),
+                round(self._pixmap.height() / dpr),
+            )
+            if logical == self.size():
+                painter.drawPixmap(0, 0, self._pixmap)
+            else:
+                # Render reducido por límite de memoria: se reescala al widget.
+                painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+                painter.drawPixmap(self.rect(), self._pixmap)
         else:
             painter.fillRect(self.rect(), QColor(246, 246, 248))
             painter.setPen(QColor(168, 168, 174))
@@ -93,7 +148,25 @@ class _PageWidget(QWidget):
             )
             painter.setPen(QColor(214, 214, 218))
             painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
+
+        if self._highlights:
+            self._paint_highlights(painter)
         painter.end()
+
+    def _paint_highlights(self, painter: QPainter) -> None:
+        w_pt, h_pt = self._page_size_pt
+        if w_pt <= 0 or h_pt <= 0:
+            return
+        sx = self.width() / w_pt
+        sy = self.height() / h_pt
+        normal = QColor(255, 214, 0, 110)
+        current = QColor(255, 140, 0, 165)
+        border = QPen(QColor(180, 120, 0, 160), 1)
+        painter.setPen(border)
+        for i, (x0, y0, x1, y1) in enumerate(self._highlights):
+            rect = QRectF(x0 * sx, y0 * sy, (x1 - x0) * sx, (y1 - y0) * sy)
+            painter.fillRect(rect, current if i == self._current_highlight else normal)
+            painter.drawRect(rect)
 
 
 class _AutoScrollIndicator(QWidget):
@@ -143,6 +216,16 @@ class PdfView(QWidget):
     pageChanged = Signal(int, int)
     #: porcentaje de zoom actual
     zoomChanged = Signal(float)
+    #: rotación de la vista en grados (0/90/180/270)
+    rotationChanged = Signal(int)
+    #: fallo al abrir o renderizar el documento (mensaje)
+    renderError = Signal(str)
+    #: True mientras hay renders pendientes
+    busyChanged = Signal(bool)
+    #: miniatura lista (índice de página, imagen)
+    thumbnailReady = Signal(int, QImage)
+    #: (posición 1-based de la coincidencia actual, total de coincidencias)
+    searchStatusChanged = Signal(int, int)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -151,14 +234,29 @@ class PdfView(QWidget):
         self._tops: List[int] = []  # coordenada Y superior de cada página
         self._content_height = 0
         self._zoom = 1.0
+        self._zoom_mode = "free"  # "free" | "width" | "page"
+        self._rotation = 0
+        self._invert = False
+        self._dpr = 1.0
         self._current_page = 0
         self._last_range: Optional[Tuple[int, int]] = None
         self._pending_fit_width = False
         self._pending_restore_page: Optional[int] = None
+        self._programmatic_scroll = False
         self._renderer: Optional[PageRenderer] = None
-        self._rendering = set()  # claves (índice, zoom) en vuelo
-        self._cache: "OrderedDict[Tuple[int, float], QPixmap]" = OrderedDict()
+        self._rendering = set()  # claves RenderKey en vuelo (de la vista)
+        self._cache: "OrderedDict[RenderKey, QPixmap]" = OrderedDict()
         self._cache_bytes = 0
+        self._busy = False
+
+        # Búsqueda de texto
+        self._search_gen = 0
+        self._search_text = ""
+        self._searching = False
+        self._hits: Dict[int, List[Rect]] = {}
+        self._hit_count = 0
+        self._hit_pos: Optional[Tuple[int, Rect]] = None
+        self._flat_hits_cache: Optional[List[Tuple[int, Rect]]] = None
 
         # Estado del auto-scroll por botón central del ratón.
         self._autoscroll_active = False
@@ -204,10 +302,13 @@ class PdfView(QWidget):
             if event.type() == QEvent.Type.Wheel:
                 if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
                     delta = event.angleDelta().y()
-                    if delta > 0:
-                        self.zoom_in()
-                    elif delta < 0:
-                        self.zoom_out()
+                    if delta:
+                        # El zoom se ancla en el punto bajo el cursor.
+                        anchor = event.position().y()
+                        if delta > 0:
+                            self.zoom_in(anchor_y=anchor)
+                        else:
+                            self.zoom_out(anchor_y=anchor)
                     return True
             if event.type() == QEvent.Type.MouseButtonPress:
                 if event.button() == Qt.MouseButton.MiddleButton:
@@ -264,11 +365,15 @@ class PdfView(QWidget):
         page_sizes: List[Tuple[float, float]],
         password: Optional[str] = None,
         start_page: Optional[int] = None,
+        zoom_mode: str = "width",
     ) -> None:
         """Carga un documento. ``page_sizes`` es la lista de (ancho, alto) en puntos."""
         self.close_document()
         self._page_sizes = list(page_sizes)
         self._zoom = 1.0
+        self._zoom_mode = zoom_mode if zoom_mode in ("width", "page") else "width"
+        self._rotation = 0
+        self._dpr = max(1.0, self.devicePixelRatioF())
         self._last_range = None
         self._pending_fit_width = True
         self._pending_restore_page = start_page
@@ -280,17 +385,17 @@ class PdfView(QWidget):
 
         self._renderer = PageRenderer(path, self, password=password)
         self._renderer.pageReady.connect(self._on_page_ready)
+        self._renderer.error.connect(self.renderError)
+        self._renderer.searchPageHits.connect(self._on_search_hits)
+        self._renderer.searchFinished.connect(self._on_search_finished)
         self._renderer.start()
 
         self._relayout()
-        if self._scroll.viewport().width() > 0:
-            self.fit_width()
-        if self._pending_restore_page is not None:
-            self.goto_page(self._pending_restore_page)
-            self._pending_restore_page = None
+        self._apply_pending_layout()
         self._schedule()
         self.pageChanged.emit(self.current_page(), len(self._pages))
         self.zoomChanged.emit(self._zoom * 100.0)
+        self.rotationChanged.emit(self._rotation)
 
     def close_document(self) -> None:
         self._stop_autoscroll()
@@ -310,39 +415,59 @@ class PdfView(QWidget):
         self._last_range = None
         self._current_page = 0
         self._pending_restore_page = None
+        self._rotation = 0
+        self._reset_search()
+        self._sync_busy()
+
     def has_document(self) -> bool:
         return bool(self._pages)
 
     # ---------------------------------------------------------------- zoom
-    def set_zoom(self, zoom: float) -> None:
+    def zoom_mode(self) -> str:
+        """Modo de zoom actual: ``"free"``, ``"width"`` o ``"page"``."""
+        return self._zoom_mode
+
+    def set_zoom(
+        self, zoom: float, anchor_y: Optional[float] = None, mode: Optional[str] = None
+    ) -> None:
+        """Cambia el zoom conservando el punto visible.
+
+        ``anchor_y`` es la coordenada Y (en el viewport) que debe permanecer
+        fija; por defecto se usa el centro del viewport.
+        """
         if not self._pages:
             return
         zoom = min(MAX_ZOOM, max(MIN_ZOOM, zoom))
         if abs(zoom - self._zoom) < 1e-6:
+            if mode is not None:
+                self._zoom_mode = mode
             return
 
         bar = self._scroll.verticalScrollBar()
-        center_content = bar.value() + self._scroll.viewport().height() / 2.0
-        ratio = center_content / max(1, self._content_height)
+        viewport_h = self._scroll.viewport().height()
+        anchor = float(anchor_y) if anchor_y is not None else viewport_h / 2.0
+        content_point = bar.value() + anchor
+        ratio = content_point / max(1, self._content_height)
 
         self._zoom = zoom
-        if self._renderer is not None:
-            self._renderer.cancel_all()
-        self._rendering.clear()
-        self._clear_cache()
-        self._last_range = None
+        self._zoom_mode = mode or "free"
+        self._invalidate_renders()
         self._relayout()
 
         new_center = ratio * self._content_height
-        bar.setValue(round(new_center - self._scroll.viewport().height() / 2.0))
+        self._programmatic_scroll = True
+        try:
+            bar.setValue(round(new_center - anchor))
+        finally:
+            self._programmatic_scroll = False
         self._schedule()
         self.zoomChanged.emit(self._zoom * 100.0)
 
-    def zoom_in(self) -> None:
-        self.set_zoom(self._zoom * 1.25)
+    def zoom_in(self, anchor_y: Optional[float] = None) -> None:
+        self.set_zoom(self._zoom * 1.25, anchor_y=anchor_y)
 
-    def zoom_out(self) -> None:
-        self.set_zoom(self._zoom / 1.25)
+    def zoom_out(self, anchor_y: Optional[float] = None) -> None:
+        self.set_zoom(self._zoom / 1.25, anchor_y=anchor_y)
 
     def fit_width(self) -> None:
         if not self._pages:
@@ -352,11 +477,8 @@ class PdfView(QWidget):
             self._pending_fit_width = True
             return
         self._pending_fit_width = False
-        max_w = max(w for w, _h in self._page_sizes)
-        self.set_zoom((vw - 2 * PAGE_MARGIN) / max_w)
-        if self._pending_restore_page is not None:
-            self.goto_page(self._pending_restore_page)
-            self._pending_restore_page = None
+        max_w = max(self._rotated_size(w, h)[0] for w, h in self._page_sizes)
+        self.set_zoom((vw - 2 * PAGE_MARGIN) / max_w, mode="width")
 
     def fit_page(self) -> None:
         if not self._pages:
@@ -364,11 +486,46 @@ class PdfView(QWidget):
         vw = self._scroll.viewport().width()
         vh = self._scroll.viewport().height()
         if vw <= 0 or vh <= 0:
+            self._pending_fit_width = True
             return
-        w, h = self._page_sizes[self._current_page]
+        self._pending_fit_width = False
+        w, h = self._rotated_size(*self._page_sizes[self._current_page])
         self.set_zoom(
-            min((vw - 2 * PAGE_MARGIN) / w, (vh - 2 * PAGE_MARGIN) / h)
+            min((vw - 2 * PAGE_MARGIN) / w, (vh - 2 * PAGE_MARGIN) / h),
+            mode="page",
         )
+
+    # ------------------------------------------------------------ rotación
+    def rotation(self) -> int:
+        return self._rotation
+
+    def rotate(self, delta: int = 90) -> None:
+        """Gira la vista completa (rotación global del documento)."""
+        if not self._pages:
+            return
+        self._rotation = (self._rotation + delta) % 360
+        self._invalidate_renders()
+        self._relayout()
+        self.goto_page(self._current_page + 1)
+        if self._zoom_mode != "free":
+            self._apply_pending_layout()
+        else:
+            self._schedule()
+        self._apply_highlights()
+        self.rotationChanged.emit(self._rotation)
+
+    # ------------------------------------------------------------ inversión
+    def is_inverted(self) -> bool:
+        return self._invert
+
+    def set_invert(self, enabled: bool) -> None:
+        """Invierte los colores de las páginas (lectura nocturna)."""
+        enabled = bool(enabled)
+        if enabled == self._invert:
+            return
+        self._invert = enabled
+        self._invalidate_renders()
+        self._schedule()
 
     # ----------------------------------------------------------- navegación
     def goto_page(self, page: int) -> None:
@@ -376,7 +533,12 @@ class PdfView(QWidget):
         if not self._pages:
             return
         index = min(len(self._pages) - 1, max(0, page - 1))
-        self._scroll.verticalScrollBar().setValue(self._tops[index])
+        self._programmatic_scroll = True
+        try:
+            self._scroll.verticalScrollBar().setValue(self._tops[index])
+        finally:
+            self._programmatic_scroll = False
+        self._set_current_page(index)
 
     def next_page(self) -> None:
         if not self._pages:
@@ -386,7 +548,13 @@ class PdfView(QWidget):
     def prev_page(self) -> None:
         if not self._pages:
             return
-        self.goto_page(max(self._current_page, 1))
+        bar = self._scroll.verticalScrollBar()
+        top = self._tops[self._current_page]
+        if bar.value() > top + PAGE_MARGIN:
+            # Si ya se avanzó dentro de la página, primero se sube a su inicio.
+            self.goto_page(self._current_page + 1)
+        else:
+            self.goto_page(self._current_page)
 
     def first_page(self) -> None:
         if not self._pages:
@@ -419,23 +587,209 @@ class PdfView(QWidget):
     def page_count(self) -> int:
         return len(self._pages)
 
+    # ------------------------------------------------------------- búsqueda
+    def is_searching(self) -> bool:
+        return self._searching
+
+    def search_text(self) -> str:
+        return self._search_text
+
+    def start_search(self, text: str) -> None:
+        """Busca ``text`` en todo el documento, progresivamente."""
+        text = text.strip()
+        if self._renderer is None or not self._pages:
+            return
+        if not text:
+            self.clear_search()
+            return
+        self._reset_search()
+        self._search_text = text
+        self._searching = True
+        self._search_gen += 1
+        self._renderer.start_search(text, self._search_gen)
+        self._emit_search_status()
+
+    def clear_search(self) -> None:
+        """Quita los resaltados y cancela una búsqueda en curso."""
+        if self._renderer is not None:
+            self._renderer.cancel_search()
+        self._reset_search()
+        for widget in self._pages:
+            widget.set_highlights([], -1)
+        self._emit_search_status()
+
+    def search_next(self) -> None:
+        self._navigate_hit(+1)
+
+    def search_prev(self) -> None:
+        self._navigate_hit(-1)
+
+    def _reset_search(self) -> None:
+        self._search_gen += 1
+        self._search_text = ""
+        self._searching = False
+        self._hits.clear()
+        self._hit_count = 0
+        self._hit_pos = None
+        self._flat_hits_cache = None
+
+    def _flat_hits(self) -> List[Tuple[int, Rect]]:
+        if self._flat_hits_cache is None:
+            self._flat_hits_cache = [
+                (page, rect)
+                for page in sorted(self._hits)
+                for rect in self._hits[page]
+            ]
+        return self._flat_hits_cache
+
+    def _navigate_hit(self, step: int) -> None:
+        flat = self._flat_hits()
+        if not flat:
+            return
+        if self._hit_pos is None:
+            pos = 0 if step > 0 else len(flat) - 1
+        else:
+            try:
+                pos = (flat.index(self._hit_pos) + step) % len(flat)
+            except ValueError:
+                pos = 0
+        self._goto_hit(flat[pos])
+
+    def _goto_hit(self, hit: Tuple[int, Rect]) -> None:
+        page, rect = hit
+        if not (0 <= page < len(self._pages)):
+            return
+        self._hit_pos = hit
+        self._apply_highlights()
+        w_pt, h_pt = self._page_sizes[page]
+        rotated = _rotate_rect(rect, w_pt, h_pt, self._rotation)
+        target = (
+            self._tops[page]
+            + round(rotated[1] * self._zoom)
+            - self._scroll.viewport().height() // 3
+        )
+        self._programmatic_scroll = True
+        try:
+            self._scroll.verticalScrollBar().setValue(target)
+        finally:
+            self._programmatic_scroll = False
+        self._set_current_page(page)
+        self._emit_search_status()
+
+    def _apply_highlights(self) -> None:
+        """Recalcula los resaltados rotados de todas las páginas con coincidencias."""
+        for page, rects in self._hits.items():
+            if not (0 <= page < len(self._pages)):
+                continue
+            w_pt, h_pt = self._page_sizes[page]
+            rotated = [_rotate_rect(r, w_pt, h_pt, self._rotation) for r in rects]
+            current = -1
+            if self._hit_pos is not None and self._hit_pos[0] == page:
+                try:
+                    current = rects.index(self._hit_pos[1])
+                except ValueError:
+                    current = -1
+            self._pages[page].set_highlights(rotated, current)
+
+    def _on_search_hits(self, gen: int, page: int, rects: List[Rect]) -> None:
+        if gen != self._search_gen or not (0 <= page < len(self._pages)):
+            return
+        self._hits[page] = list(rects)
+        self._flat_hits_cache = None
+        self._hit_count += len(rects)
+        w_pt, h_pt = self._page_sizes[page]
+        rotated = [_rotate_rect(r, w_pt, h_pt, self._rotation) for r in rects]
+        self._pages[page].set_highlights(rotated, -1)
+        self._emit_search_status()
+
+    def _on_search_finished(self, gen: int) -> None:
+        if gen != self._search_gen:
+            return
+        self._searching = False
+        if self._hit_count and self._hit_pos is None:
+            self._navigate_hit(+1)
+        else:
+            self._emit_search_status()
+
+    def _emit_search_status(self) -> None:
+        if self._hit_pos is None:
+            self.searchStatusChanged.emit(0, self._hit_count)
+            return
+        flat = self._flat_hits()
+        try:
+            pos = flat.index(self._hit_pos) + 1
+        except ValueError:
+            pos = 0
+        self.searchStatusChanged.emit(pos, self._hit_count)
+
+    # ----------------------------------------------------------- miniaturas
+    def request_thumbnail(self, index: int) -> None:
+        """Pide el render de una miniatura para el panel lateral."""
+        if self._renderer is None or not (0 <= index < len(self._pages)):
+            return
+        key = RenderKey(index, THUMBNAIL_ZOOM, self._rotation, False, 1.0)
+        self._renderer.request(key, priority=THUMBNAIL_PRIORITY)
+
     # ------------------------------------------------------------ internos
+    def _rotated_size(self, w_pt: float, h_pt: float) -> Tuple[float, float]:
+        if self._rotation % 180:
+            return h_pt, w_pt
+        return w_pt, h_pt
+
+    def _key(self, index: int) -> RenderKey:
+        return RenderKey(index, self._zoom, self._rotation, self._invert, self._dpr)
+
+    def _invalidate_renders(self) -> None:
+        if self._renderer is not None:
+            self._renderer.cancel_all()
+        self._rendering.clear()
+        self._last_range = None
+        self._sync_busy()
+
+    def _sync_busy(self) -> None:
+        busy = bool(self._rendering)
+        if busy != self._busy:
+            self._busy = busy
+            self.busyChanged.emit(busy)
+
+    def _apply_pending_layout(self) -> None:
+        """Aplica el ajuste inicial (y el modo continuo) cuando hay viewport."""
+        if not self._pages:
+            return
+        if self._zoom_mode == "page":
+            self.fit_page()
+        else:
+            self.fit_width()
+        self._maybe_restore_start_page()
+
+    def _maybe_restore_start_page(self) -> None:
+        if (
+            self._pending_restore_page is None
+            or self._pending_fit_width
+            or not self._pages
+            or self._scroll.viewport().width() <= 0
+        ):
+            return
+        page = self._pending_restore_page
+        self._pending_restore_page = None
+        QTimer.singleShot(0, lambda p=page: self.goto_page(p))
+
     def _relayout(self) -> None:
         tops: List[int] = []
         y = 0
+        max_width = 0.0
         for widget, (w_pt, h_pt) in zip(self._pages, self._page_sizes):
+            w_pt, h_pt = self._rotated_size(w_pt, h_pt)
+            widget.set_page_size_pt(w_pt, h_pt)
             widget.set_page_size(
                 QSize(round(w_pt * self._zoom), round(h_pt * self._zoom))
             )
             tops.append(y)
             y += widget.height() + PAGE_MARGIN
+            max_width = max(max_width, w_pt)
         self._tops = tops
         self._content_height = max(0, y - PAGE_MARGIN)
-        width = (
-            round(max(w for w, _h in self._page_sizes) * self._zoom)
-            if self._page_sizes
-            else 0
-        )
+        width = round(max_width * self._zoom) if self._page_sizes else 0
         self._container.setFixedSize(width, self._content_height)
 
     def _page_index_at(self, y: int) -> int:
@@ -454,10 +808,15 @@ class PdfView(QWidget):
 
     def _on_scroll(self, _value: int) -> None:
         self._schedule()
+        if self._programmatic_scroll:
+            return
         top_page = self._page_index_at(self._scroll.verticalScrollBar().value())
-        if top_page != self._current_page:
-            self._current_page = top_page
-            self.pageChanged.emit(self._current_page + 1, len(self._pages))
+        self._set_current_page(top_page)
+
+    def _set_current_page(self, index: int) -> None:
+        if index != self._current_page:
+            self._current_page = index
+            self.pageChanged.emit(index + 1, len(self._pages))
 
     def _schedule(self) -> None:
         if self._renderer is None or not self._pages:
@@ -469,61 +828,98 @@ class PdfView(QWidget):
 
         center = (first + last) // 2
         for i in range(first, last + 1):
-            key = (i, self._zoom)
+            key = self._key(i)
             if key in self._cache:
                 self._cache.move_to_end(key)
                 continue
             if key in self._rendering:
                 continue
             self._rendering.add(key)
-            self._renderer.request(i, self._zoom, abs(i - center))
-
+            self._renderer.request(key, abs(i - center))
+        self._sync_busy()
         self._evict(first, last)
 
-    def _on_page_ready(self, index: int, zoom: float, image: QImage) -> None:
-        key = (index, zoom)
+    def _on_page_ready(self, key: RenderKey, image: QImage) -> None:
+        if key.zoom == THUMBNAIL_ZOOM:
+            self.thumbnailReady.emit(key.index, image)
+            return
         self._rendering.discard(key)
-        if abs(zoom - self._zoom) > 1e-6:
-            return  # pedido obsoleto (cambió el zoom)
-        if not (0 <= index < len(self._pages)):
+        self._sync_busy()
+        if key != self._key(key.index):
+            return  # pedido obsoleto (cambió zoom, rotación o pantalla)
+        if not (0 <= key.index < len(self._pages)):
             return
         pixmap = QPixmap.fromImage(image)
-        self._cache[key] = pixmap
-        self._cache_bytes += pixmap.width() * pixmap.height() * 4
-        self._pages[index].set_pixmap(pixmap)
+        nbytes = pixmap.width() * pixmap.height() * 4
+        if nbytes <= CACHE_BUDGET_BYTES:
+            self._cache[key] = pixmap
+            self._cache_bytes += nbytes
+        self._pages[key.index].set_pixmap(pixmap)
         self._trim_cache_by_budget()
 
     # -------------------------------------------------------------- caché
-    def _clear_cache(self) -> None:
-        for widget in self._pages:
-            widget.clear_pixmap()
-        self._cache.clear()
-        self._cache_bytes = 0
-
-    def _remove_from_cache(self, key: Tuple[int, float]) -> None:
+    def _remove_from_cache(self, key: RenderKey) -> None:
         pixmap = self._cache.pop(key, None)
         if pixmap is None:
             return
         self._cache_bytes -= pixmap.width() * pixmap.height() * 4
-        index, zoom = key
-        if abs(zoom - self._zoom) < 1e-6 and 0 <= index < len(self._pages):
+        index = key.index
+        if key == self._key(index) and 0 <= index < len(self._pages):
             self._pages[index].clear_pixmap()
 
     def _evict(self, first: int, last: int) -> None:
+        """Descarta lo que no sirve: otra rotación/inversión/pantalla o muy lejos.
+
+        Las páginas cercanas de otros niveles de zoom se conservan para poder
+        volver a ellos sin re-renderizar.
+        """
         for key in list(self._cache.keys()):
-            index, zoom = key
-            if abs(zoom - self._zoom) > 1e-6 or index < first or index > last:
+            index = key.index
+            stale = (
+                key.rotation != self._rotation
+                or key.invert != self._invert
+                or abs(key.dpr - self._dpr) > 1e-6
+            )
+            if stale or index < first - KEEP_PAGES or index > last + KEEP_PAGES:
                 self._remove_from_cache(key)
         self._trim_cache_by_budget()
 
     def _trim_cache_by_budget(self) -> None:
-        while self._cache_bytes > CACHE_BUDGET_BYTES and self._cache:
-            oldest = next(iter(self._cache))
-            self._remove_from_cache(oldest)
+        if self._cache_bytes <= CACHE_BUDGET_BYTES:
+            return
+        visible = set()
+        if self._last_range is not None:
+            first, last = self._last_range
+            visible = {self._key(i) for i in range(first, last + 1)}
+        for key in list(self._cache.keys()):
+            if self._cache_bytes <= CACHE_BUDGET_BYTES:
+                break
+            if key in visible:
+                # Lo visible se conserva aunque el presupuesto se exceda.
+                continue
+            self._remove_from_cache(key)
 
     # ------------------------------------------------------------ eventos
+    def _refresh_dpr(self) -> bool:
+        """Detecta cambios de pantalla (HiDPI) e invalida los renders."""
+        dpr = max(1.0, self.devicePixelRatioF())
+        if abs(dpr - self._dpr) < 1e-6:
+            return False
+        self._dpr = dpr
+        self._invalidate_renders()
+        self._schedule()
+        return True
+
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
         self._schedule()
-        if self._pending_fit_width and self._pages:
-            QTimer.singleShot(0, self.fit_width)
+        if self._refresh_dpr():
+            return
+        if self._pages and (self._pending_fit_width or self._zoom_mode != "free"):
+            QTimer.singleShot(0, self._apply_pending_layout)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._refresh_dpr()
+        if self._pages and self._pending_fit_width:
+            QTimer.singleShot(0, self._apply_pending_layout)

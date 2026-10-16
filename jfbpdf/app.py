@@ -3,25 +3,46 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 import tempfile
 from typing import List, Optional
 
-from .version import APP_NAME, VERSION
+from .version import APP_ID, APP_NAME, VERSION
+
+logger = logging.getLogger("jfbpdf")
 
 
-def _fitz():
-    try:  # PyMuPDF moderno
-        import pymupdf as m
-    except ImportError:  # alias histórico
-        import fitz as m  # type: ignore
-    return m
+def _configure_logging() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+
+def _application_icon():
+    """Icono de la aplicación: del tema del escritorio o del SVG empaquetado."""
+    from PySide6.QtGui import QIcon
+
+    icon = QIcon.fromTheme(APP_ID)
+    if not icon.isNull():
+        return icon
+    svg = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "packaging",
+        "jfbpdf.svg",
+    )
+    if os.path.exists(svg):
+        icon = QIcon(svg)
+    return icon
 
 
 def _generate_test_pdf(path: str, pages: int = 5) -> None:
-    fitz = _fitz()
-    doc = fitz.open()
+    from .compat import fitz
+
+    doc = fitz().open()
     for i in range(pages):
         page = doc.new_page(width=595, height=842)  # A4
         page.insert_text(
@@ -29,6 +50,7 @@ def _generate_test_pdf(path: str, pages: int = 5) -> None:
             f"JFB Pdf — página de prueba {i + 1}",
             fontsize=20,
         )
+        page.insert_text((72, 140), "texto buscable", fontsize=12)
     doc.save(path)
     doc.close()
 
@@ -38,8 +60,8 @@ def _self_test() -> int:
     if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-    from .main_window import read_pdf_info
-    from .renderer import _page_to_image
+    from .main_window import read_pdf_info, read_pdf_toc
+    from .renderer import RenderKey, _page_to_image
 
     fd, path = tempfile.mkstemp(suffix=".pdf")
     os.close(fd)
@@ -48,12 +70,24 @@ def _self_test() -> int:
 
         count, sizes = read_pdf_info(path)
         assert count == 5 and len(sizes) == 5, "lectura de páginas incorrecta"
+        assert read_pdf_toc(path) == [], "el PDF generado no debería tener índice"
 
-        doc = _fitz().open(path)
+        from .compat import fitz
+
+        doc = fitz().open(path)
         try:
             for i in range(count):
-                image = _page_to_image(doc.load_page(i), 1.5)
+                key = RenderKey(i, 1.5, rotation=0, invert=False, dpr=1.0)
+                image = _page_to_image(doc.load_page(i), key)
                 assert image is not None and not image.isNull(), f"página {i} vacía"
+                # Rotación: las dimensiones deben intercambiarse en 90/270.
+                rotated = _page_to_image(
+                    doc.load_page(i), RenderKey(i, 1.0, 90, False, 1.0)
+                )
+                assert rotated is not None and not rotated.isNull(), "rotación vacía"
+                assert (
+                    rotated.width() == 842 and rotated.height() == 595
+                ), "rotación de 90° incorrecta"
         finally:
             doc.close()
 
@@ -99,11 +133,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.self_test:
         return _self_test()
 
+    _configure_logging()
+
     from PySide6.QtWidgets import QApplication
 
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
+    app.setApplicationDisplayName(APP_NAME)
     app.setApplicationVersion(VERSION)
+    app.setDesktopFileName(APP_ID)
+    app.setWindowIcon(_application_icon())
 
     from .main_window import MainWindow
 

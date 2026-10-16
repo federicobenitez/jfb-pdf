@@ -1,0 +1,16 @@
+#!/usr/bin/python3
+"""Lanzador instalado en /usr/bin/jfbpdf.
+
+Añade el directorio de la aplicación al ``sys.path`` y arranca la GUI.
+"""
+
+import sys
+
+APP_DIR = "/usr/share/jfbpdf"
+if APP_DIR not in sys.path:
+    sys.path.insert(0, APP_DIR)
+
+from jfbpdf.app import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

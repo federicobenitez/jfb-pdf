@@ -1,0 +1,14 @@
+# Artefactos de Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Artefactos de empaquetado (generados por build.sh)
+deb/
+*.deb
+dist/
+
+# Entornos virtuales
+.venv/
+venv/

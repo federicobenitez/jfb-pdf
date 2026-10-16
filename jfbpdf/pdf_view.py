@@ -56,12 +56,6 @@ CACHE_BUDGET_BYTES = 150 * 1024 * 1024
 MIN_ZOOM = 0.20
 MAX_ZOOM = 8.0
 
-#: Zoom fijo con el que se renderizan las miniaturas del panel lateral.
-THUMBNAIL_ZOOM = 0.10
-
-#: Prioridad de los pedidos de miniatura (los más bajos se atienden antes).
-THUMBNAIL_PRIORITY = 10_000
-
 #: Intervalo del temporizador de auto-scroll, en milisegundos (~60 fps).
 AUTOSCROLL_INTERVAL_MS = 16
 #: Zona muerta vertical (px) alrededor del ancla donde no hay desplazamiento.
@@ -220,8 +214,6 @@ class PdfView(QWidget):
     renderError = Signal(str)
     #: True mientras hay renders pendientes
     busyChanged = Signal(bool)
-    #: miniatura lista (índice de página, imagen)
-    thumbnailReady = Signal(int, QImage)
     #: (posición 1-based de la coincidencia actual, total de coincidencias)
     searchStatusChanged = Signal(int, int)
 
@@ -729,14 +721,6 @@ class PdfView(QWidget):
             pos = 0
         self.searchStatusChanged.emit(pos, self._hit_count)
 
-    # ----------------------------------------------------------- miniaturas
-    def request_thumbnail(self, index: int) -> None:
-        """Pide el render de una miniatura para el panel lateral."""
-        if self._renderer is None or not (0 <= index < len(self._pages)):
-            return
-        key = RenderKey(index, THUMBNAIL_ZOOM, self._rotation, False, 1.0)
-        self._renderer.request(key, priority=THUMBNAIL_PRIORITY)
-
     # ------------------------------------------------------------ internos
     def _rotated_size(self, w_pt: float, h_pt: float) -> Tuple[float, float]:
         if self._rotation % 180:
@@ -847,9 +831,6 @@ class PdfView(QWidget):
         self._evict(first, last)
 
     def _on_page_ready(self, key: RenderKey, image: QImage) -> None:
-        if key.zoom == THUMBNAIL_ZOOM:
-            self.thumbnailReady.emit(key.index, image)
-            return
         self._rendering.discard(key)
         self._sync_busy()
         if key != self._key(key.index):

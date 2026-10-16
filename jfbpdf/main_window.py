@@ -138,7 +138,7 @@ class MainWindow(QMainWindow):
         password: Optional[str] = None
         while True:
             try:
-                count, sizes = read_pdf_info(path, password)
+                _count, sizes = read_pdf_info(path, password)
                 break
             except (PasswordRequiredError, InvalidPasswordError) as exc:
                 pwd, ok = QInputDialog.getText(
@@ -171,8 +171,7 @@ class MainWindow(QMainWindow):
         )
         self._current_path = abs_path
         self._state.add_recent(abs_path)
-        self._sidebar.set_document(read_pdf_toc(path, password), count)
-        self._sidebar.set_current_page(self._view.current_page())
+        self._sidebar.set_document(read_pdf_toc(path, password))
         self._hide_search(clear_text=True)
         self.setWindowTitle(f"{APP_NAME} — {path}")
 
@@ -182,8 +181,7 @@ class MainWindow(QMainWindow):
         self._view.close_document()
         self._current_path = None
         self._password = None
-        self._sidebar.set_document([], 0)
-        self._sidebar.set_current_page(0)
+        self._sidebar.set_document([])
         self._hide_search(clear_text=True)
         self.setWindowTitle(APP_NAME)
         self._page_edit.clear()
@@ -404,7 +402,6 @@ class MainWindow(QMainWindow):
         self._status_page.setText(f"Página {current} de {total}")
         if self._current_path:
             self._state.set_last_page(self._current_path, current)
-        self._sidebar.set_current_page(current)
 
     def _on_zoom_changed(self, percent: float) -> None:
         self._zoom_percent = percent
@@ -685,7 +682,6 @@ class MainWindow(QMainWindow):
         self._sidebar = Sidebar(self)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._sidebar)
         self._sidebar.pageRequested.connect(self._view.goto_page)
-        self._sidebar.bind_view(self._view)
         self._sidebar.visibilityChanged.connect(self._on_sidebar_visibility)
 
     def _build_shortcuts(self) -> None:

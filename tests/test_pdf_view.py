@@ -99,13 +99,6 @@ class PdfViewTest(QtTestCase):
         self.view.clear_search()
         self.assertEqual(self.view._hit_count, 0)
 
-    def test_miniaturas(self) -> None:
-        self._open()
-        received: list = []
-        self.view.thumbnailReady.connect(lambda i, img: received.append(i))
-        self.view.request_thumbnail(2)
-        self.assertTrue(process_until(lambda: 2 in received))
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -11,7 +11,7 @@ perezoso en segundo plano y una caché con presupuesto de memoria.
 - Scroll continuo y fluido: sólo se renderizan las páginas visibles.
 - **Búsqueda de texto** (`Ctrl+F`) con resaltados, contador de coincidencias
   y navegación con `F3` / `Shift+F3`.
-- **Panel lateral** (`F9`) con el **índice** del documento y **miniaturas**.
+- **Panel lateral** (`F9`) con el **índice** del documento.
 - **Auto-scroll**: pulsa el botón central del ratón y mueve el cursor
   arriba/abajo del punto de anclaje para desplazarte de forma continua
   (clic o `Esc` para salir).
@@ -38,9 +38,9 @@ Todas están disponibles en los repositorios de Debian 13 (trixie).
 ## Instalación
 
 ```bash
-sudo apt install ./jfbpdf_1.1.1_all.deb
+sudo apt install ./jfbpdf_1.2.0_all.deb
 # o bien:
-sudo dpkg -i jfbpdf_1.1.1_all.deb
+sudo dpkg -i jfbpdf_1.2.0_all.deb
 ```
 
 Luego se puede lanzar desde el menú de aplicaciones (categoría *Gráficos*),

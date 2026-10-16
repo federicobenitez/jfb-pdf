@@ -1,3 +1,10 @@
+jfbpdf (1.2.0) unstable; urgency=medium
+
+  * Elimina el panel de miniaturas: el panel lateral (F9) queda solo con el
+    índice del documento.
+
+ -- Federico Benitez <benitez.federico@gmail.com>  Fri, 16 Oct 2026 12:00:00 -0300
+
 jfbpdf (1.1.1) unstable; urgency=medium
 
   * Corrige la salida del modo presentación: ni Esc ni F5 respondían una vez

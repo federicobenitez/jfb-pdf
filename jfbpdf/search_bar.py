@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -66,11 +65,8 @@ class SearchBar(QWidget):
         self._next_button.clicked.connect(self.nextRequested)
         self._close_button.clicked.connect(self.closed)
 
-        # Esc cierra la barra sólo cuando el foco está dentro de ella (si no,
-        # chocaría con el Esc del auto-scroll de la vista).
-        shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
-        shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        shortcut.activated.connect(self.closed)
+        # Nota: Esc no se registra aquí; la ventana principal tiene un único
+        # atajo Esc (varios atajos Esc simultáneos se anulan entre sí en Qt).
 
     # -------------------------------------------------------------- API
     def search_text(self) -> str:

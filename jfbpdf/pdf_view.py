@@ -25,12 +25,10 @@ from PySide6.QtGui import (
     QColor,
     QCursor,
     QImage,
-    QKeySequence,
     QPainter,
     QPen,
     QPixmap,
     QPolygon,
-    QShortcut,
 )
 from PySide6.QtWidgets import (
     QFrame,
@@ -292,10 +290,6 @@ class PdfView(QWidget):
         self._autoscroll_indicator = _AutoScrollIndicator(self._scroll.viewport())
         self._scroll.viewport().installEventFilter(self)
 
-        self._autoscroll_shortcut = QShortcut(
-            QKeySequence(Qt.Key.Key_Escape), self, activated=self._stop_autoscroll
-        )
-
     # ------------------------------------------------------ auto-scroll
     def eventFilter(self, watched, event):  # noqa: N802
         if watched is self._scroll.viewport():
@@ -340,6 +334,19 @@ class PdfView(QWidget):
         self._autoscroll_timer.stop()
         self._autoscroll_indicator.hide()
         self._scroll.viewport().unsetCursor()
+
+    def is_autoscroll_active(self) -> bool:
+        """Indica si el auto-scroll por botón central está en marcha."""
+        return self._autoscroll_active
+
+    def stop_autoscroll(self) -> None:
+        """Detiene el auto-scroll si está activo.
+
+        La ventana lo usa para que una sola tecla Esc atienda, en orden:
+        presentación, búsqueda y auto-scroll (varios atajos Esc simultáneos
+        se anulan entre sí en Qt).
+        """
+        self._stop_autoscroll()
 
     def _autoscroll_tick(self) -> None:
         if not self._autoscroll_active:

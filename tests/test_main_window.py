@@ -12,7 +12,7 @@ from jfbpdf.errors import InvalidPasswordError, PasswordRequiredError
 from jfbpdf.main_window import MainWindow, read_pdf_info, read_pdf_toc
 from jfbpdf.state import AppState
 
-from .support import TempDirTestCase, make_encrypted_pdf, make_test_pdf
+from .support import TempDirTestCase, make_encrypted_pdf, make_test_pdf, process_until
 
 
 class ReadPdfInfoTest(TempDirTestCase):
@@ -53,6 +53,12 @@ class MainWindowTest(TempDirTestCase):
         self.window = MainWindow()
         self.window.open_file(self.path)
         self.window.show()
+        # En offscreen la ventana tarda en quedar activa y los atajos de
+        # ventana no se disparan hasta entonces.
+        self.assertTrue(
+            process_until(lambda: self.window.isActiveWindow()),
+            "la ventana no se activó",
+        )
 
     def tearDown(self) -> None:
         self.window.close()
@@ -90,6 +96,38 @@ class MainWindowTest(TempDirTestCase):
         self.app.processEvents()
         self.assertTrue(self.window.act_first.isEnabled())
         self.assertTrue(self.window.act_last.isEnabled())
+
+    def test_esc_cierra_la_busqueda(self) -> None:
+        self.window._show_search()
+        self.window._search_bar.focus_edit()
+        self.app.processEvents()
+        self.assertTrue(self.window._search_toolbar.isVisible())
+        self._key(Qt.Key.Key_Escape)
+        self.assertFalse(self.window._search_toolbar.isVisible())
+
+    def test_esc_detiene_autoscroll(self) -> None:
+        view = self.window._view
+        view._start_autoscroll(view._scroll.viewport().rect().center())
+        self.assertTrue(view.is_autoscroll_active())
+        self._key(Qt.Key.Key_Escape)
+        self.assertFalse(view.is_autoscroll_active())
+
+    def test_salir_de_presentacion_con_esc(self) -> None:
+        self.window._enter_presentation()
+        self.app.processEvents()
+        self.assertTrue(self.window._presentation)
+        self.assertFalse(self.window._toolbar.isVisible())
+        self._key(Qt.Key.Key_Escape)
+        self.assertFalse(self.window._presentation)
+        self.assertTrue(self.window._toolbar.isVisible())
+
+    def test_salir_de_presentacion_con_f5(self) -> None:
+        self._key(Qt.Key.Key_F5)
+        self.assertTrue(self.window._presentation)
+        # F5 debe seguir funcionando con la barra de menú oculta.
+        self._key(Qt.Key.Key_F5)
+        self.assertFalse(self.window._presentation)
+        self.assertTrue(self.window._toolbar.isVisible())
 
     def test_guardado_al_cerrar(self) -> None:
         self.window._view.goto_page(4)

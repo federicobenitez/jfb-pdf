@@ -1,3 +1,14 @@
+jfbpdf (1.1.1) unstable; urgency=medium
+
+  * Corrige la salida del modo presentación: ni Esc ni F5 respondían una vez
+    ocultas la barra de menú y la de herramientas (Qt desactiva el atajo de
+    una QAction cuando todos sus widgets asociados quedan ocultos).
+  * Unifica el manejo de Esc en la ventana, con prioridad presentación >
+    búsqueda > auto-scroll, porque varios atajos Esc simultáneos se anulan
+    entre sí y dejaban la tecla sin efecto.
+
+ -- Federico Benitez <benitez.federico@gmail.com>  Fri, 16 Oct 2026 12:00:00 -0300
+
 jfbpdf (1.1.0) unstable; urgency=medium
 
   * Búsqueda de texto con resaltados, contador y navegación (Ctrl+F, F3,

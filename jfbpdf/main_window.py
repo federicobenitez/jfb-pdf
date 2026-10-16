@@ -91,7 +91,6 @@ class MainWindow(QMainWindow):
         self._sidebar_was_visible = False
         self._search_was_visible = False
         self._was_maximized = False
-        self._esc_shortcut: Optional[QShortcut] = None
 
         self._view = PdfView(self)
         self.setCentralWidget(self._view)
@@ -365,18 +364,12 @@ class MainWindow(QMainWindow):
         self.act_presentation.setChecked(True)
         self.showFullScreen()
         self._view.fit_page()
-        if self._esc_shortcut is None:
-            self._esc_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
-            self._esc_shortcut.activated.connect(self._exit_presentation)
 
     def _exit_presentation(self) -> None:
         if not self._presentation:
             return
         self._presentation = False
-        if self._esc_shortcut is not None:
-            self._esc_shortcut.setEnabled(False)
-            self._esc_shortcut.deleteLater()
-            self._esc_shortcut = None
+        self._view.stop_autoscroll()
         self.menuBar().show()
         self._toolbar.show()
         self.statusBar().show()
@@ -552,6 +545,35 @@ class MainWindow(QMainWindow):
         self.act_about = QAction(f"Acerca de {APP_NAME}", self)
         self.act_about.triggered.connect(self._show_about)
 
+        # Los atajos de una QAction se desactivan cuando todos sus widgets
+        # asociados quedan ocultos (p. ej. la barra de menú y la de
+        # herramientas en el modo presentación). Asociarlas también a la
+        # ventana las mantiene activas mientras la ventana sea visible.
+        for action in (
+            self.act_open,
+            self.act_close_doc,
+            self.act_print,
+            self.act_quit,
+            self.act_zoom_in,
+            self.act_zoom_out,
+            self.act_fit_width,
+            self.act_fit_page,
+            self.act_rotate_right,
+            self.act_rotate_left,
+            self.act_invert,
+            self.act_dark_theme,
+            self.act_panel,
+            self.act_fullscreen,
+            self.act_presentation,
+            self.act_goto,
+            self.act_first,
+            self.act_last,
+            self.act_search,
+            self.act_find_next,
+            self.act_find_prev,
+        ):
+            self.addAction(action)
+
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("Archivo")
         file_menu.addAction(self.act_open)
@@ -674,6 +696,20 @@ class MainWindow(QMainWindow):
         )
         QShortcut(QKeySequence("PgDown"), self, activated=self._view.page_down)
         QShortcut(QKeySequence("PgUp"), self, activated=self._view.page_up)
+        # Un único Esc para toda la ventana: varios atajos Esc simultáneos
+        # (presentación, búsqueda, auto-scroll) se anulan entre sí en Qt.
+        QShortcut(
+            QKeySequence(Qt.Key.Key_Escape), self, activated=self._on_escape
+        )
+
+    def _on_escape(self) -> None:
+        """Esc de la ventana, por prioridad: presentación, búsqueda, auto-scroll."""
+        if self._presentation:
+            self._exit_presentation()
+        elif self._search_visible:
+            self._hide_search()
+        elif self._view.is_autoscroll_active():
+            self._view.stop_autoscroll()
 
     # ------------------------------------------------------------ opciones
     def _on_invert_toggled(self, checked: bool) -> None:

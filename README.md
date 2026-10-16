@@ -38,9 +38,9 @@ Todas están disponibles en los repositorios de Debian 13 (trixie).
 ## Instalación
 
 ```bash
-sudo apt install ./jfbpdf_1.1.0_all.deb
+sudo apt install ./jfbpdf_1.1.1_all.deb
 # o bien:
-sudo dpkg -i jfbpdf_1.1.0_all.deb
+sudo dpkg -i jfbpdf_1.1.1_all.deb
 ```
 
 Luego se puede lanzar desde el menú de aplicaciones (categoría *Gráficos*),

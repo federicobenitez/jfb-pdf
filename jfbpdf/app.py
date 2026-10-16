@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import shutil
 import sys
 import tempfile
 from typing import List, Optional
@@ -60,6 +61,11 @@ def _self_test() -> int:
     if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+    # El self-test no debe tocar el estado real del usuario (geometría,
+    # recientes, última página): usa su propio directorio de configuración.
+    config_tmp = tempfile.mkdtemp(prefix="jfbpdf-self-test-")
+    os.environ["XDG_CONFIG_HOME"] = config_tmp
+
     from .main_window import read_pdf_info, read_pdf_toc
     from .renderer import RenderKey, _page_to_image
 
@@ -108,6 +114,7 @@ def _self_test() -> int:
         print("SELF-TEST OK")
         return 0
     finally:
+        shutil.rmtree(config_tmp, ignore_errors=True)
         try:
             os.unlink(path)
         except OSError:

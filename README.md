@@ -21,8 +21,9 @@ perezoso en segundo plano y una caché con presupuesto de memoria.
   colores** para lectura nocturna (`Ctrl+I`).
 - **Modo presentación** (`F5`), **pantalla completa** (`F11`) e **impresión**
   (`Ctrl+P`, requiere `python3-pyside6.qtprintsupport`).
-- Render nítido en pantallas **HiDPI** y restauración de la última página
-  leída, geometría de ventana y preferencias.
+- Render nítido en pantallas **HiDPI**; recuerda la última página leída, el
+  tamaño y estado de la ventana (maximizada o no) y las preferencias. En la
+  primera ejecución la ventana abre maximizada.
 - Tema claro/oscuro de la interfaz.
 - Diálogo "Acerca De" con la descripción, el autor y su email.
 
@@ -38,9 +39,9 @@ Todas están disponibles en los repositorios de Debian 13 (trixie).
 ## Instalación
 
 ```bash
-sudo apt install ./jfbpdf_1.2.0_all.deb
+sudo apt install ./jfbpdf_1.2.1_all.deb
 # o bien:
-sudo dpkg -i jfbpdf_1.2.0_all.deb
+sudo dpkg -i jfbpdf_1.2.1_all.deb
 ```
 
 Luego se puede lanzar desde el menú de aplicaciones (categoría *Gráficos*),

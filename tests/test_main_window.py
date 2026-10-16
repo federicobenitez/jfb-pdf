@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import os
 
 from PySide6.QtCore import QEvent, Qt
@@ -128,6 +130,99 @@ class MainWindowTest(TempDirTestCase):
         self._key(Qt.Key.Key_F5)
         self.assertFalse(self.window._presentation)
         self.assertTrue(self.window._toolbar.isVisible())
+
+    def test_primera_apertura_maximizada(self) -> None:
+        # Sin geometría guardada (XDG recién creado) la ventana abre maximizada.
+        self.assertTrue(self.window.isMaximized())
+
+    def test_tamano_de_ventana_persistente(self) -> None:
+        self.window.showNormal()
+        self.window.resize(640, 480)
+        self.app.processEvents()
+        self.window.close()
+        self.app.processEvents()
+
+        otra = MainWindow()
+        otra.show()
+        self.app.processEvents()
+        try:
+            self.assertFalse(otra.isMaximized())
+            self.assertEqual((otra.width(), otra.height()), (640, 480))
+        finally:
+            otra.close()
+            otra.deleteLater()
+            self.app.processEvents()
+
+    def test_estado_maximizado_persistente(self) -> None:
+        self.assertTrue(self.window.isMaximized())
+        self.window.close()
+        self.app.processEvents()
+
+        otra = MainWindow()
+        otra.show()
+        self.app.processEvents()
+        try:
+            self.assertTrue(otra.isMaximized())
+        finally:
+            otra.close()
+            otra.deleteLater()
+            self.app.processEvents()
+
+    def test_pantalla_completa_no_se_restaura(self) -> None:
+        self.window.showFullScreen()
+        self.app.processEvents()
+        self.assertTrue(self.window.isFullScreen())
+        self.window.close()
+        self.app.processEvents()
+
+        otra = MainWindow()
+        otra.show()
+        self.app.processEvents()
+        try:
+            self.assertFalse(otra.isFullScreen())
+        finally:
+            otra.close()
+            otra.deleteLater()
+            self.app.processEvents()
+
+    def test_cerrar_en_presentacion_no_guarda_pantalla_completa(self) -> None:
+        self.window._enter_presentation()
+        self.app.processEvents()
+        self.assertTrue(self.window.isFullScreen())
+        self.window.close()
+        self.app.processEvents()
+
+        otra = MainWindow()
+        otra.show()
+        self.app.processEvents()
+        try:
+            self.assertFalse(otra.isFullScreen())
+        finally:
+            otra.close()
+            otra.deleteLater()
+            self.app.processEvents()
+
+    def test_geometria_ilegible_abre_maximizada(self) -> None:
+        # Estado guardado por versiones anteriores (base64 doble): en lugar de
+        # fallar en silencio, la ventana debe abrir maximizada.
+        from jfbpdf.state import config_dir
+
+        os.makedirs(config_dir(), exist_ok=True)
+        doble = base64.b64encode(base64.b64encode(b"geometria-rota")).decode()
+        with open(
+            os.path.join(config_dir(), "state.json"), "w", encoding="utf-8"
+        ) as fh:
+            json.dump({"geometry": doble}, fh)
+
+        otra = MainWindow()
+        otra.show()
+        self.app.processEvents()
+        try:
+            self.assertTrue(otra.isMaximized())
+        finally:
+            otra.close()
+            otra.deleteLater()
+            self.app.processEvents()
 
     def test_guardado_al_cerrar(self) -> None:
         self.window._view.goto_page(4)

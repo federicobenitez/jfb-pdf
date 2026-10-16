@@ -60,6 +60,26 @@ class AppStateTest(TempDirTestCase):
         self.assertTrue(loaded.invert)
         self.assertTrue(loaded.dark_theme)
 
+    def test_geometria_roundtrip_con_un_solo_base64(self) -> None:
+        from PySide6.QtCore import QByteArray
+
+        cruda = b"\x01\xd9\xd0\xcb\x00\x03\x00\x00"
+        state = AppState()
+        state.save_geometry(QByteArray(cruda))
+        state.save_now()
+        loaded = AppState()
+        self.assertEqual(loaded.geometry, cruda)
+
+    def test_geometria_vacia_no_pisa_la_guardada(self) -> None:
+        from PySide6.QtCore import QByteArray
+
+        state = AppState()
+        state.save_geometry(QByteArray(b"\x01\x02\x03\x04"))
+        state.save_geometry(QByteArray())  # p. ej. ventana ya oculta
+        state.save_now()
+        loaded = AppState()
+        self.assertEqual(loaded.geometry, b"\x01\x02\x03\x04")
+
 
 if __name__ == "__main__":
     import unittest

@@ -111,8 +111,14 @@ class MainWindow(QMainWindow):
 
         self._state.recentChanged.connect(self._rebuild_recent_menu)
         self._rebuild_recent_menu()
+        restored = False
         if self._state.geometry:
-            self.restoreGeometry(QByteArray(self._state.geometry))
+            restored = self.restoreGeometry(QByteArray(self._state.geometry))
+        if not restored:
+            # Primera ejecución (o estado ilegible): abrir maximizada.
+            self.setWindowState(
+                self.windowState() | Qt.WindowState.WindowMaximized
+            )
         app = QApplication.instance()
         if app is not None:
             apply_theme(app, self._state.dark_theme)
@@ -191,6 +197,12 @@ class MainWindow(QMainWindow):
         self._status_busy.setText("")
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        if self._presentation:
+            # No guardar el estado de pantalla completa del modo presentación.
+            self._exit_presentation()
+        elif self.isFullScreen():
+            # Tampoco el de F11: se reabre en tamaño normal o maximizado.
+            self.showNormal()
         if self._current_path and self._view.has_document():
             self._state.set_last_page(self._current_path, self._view.current_page())
         self._state.save_geometry(self.saveGeometry())

@@ -88,7 +88,16 @@ class AppState(QObject):
         self.schedule_save()
 
     def save_geometry(self, geometry) -> None:
-        self.geometry = bytes(geometry.toBase64())
+        """Guarda la geometría cruda de la ventana (``QByteArray`` de Qt).
+
+        La codificación base64 se aplica sólo al escribir el JSON; si se
+        codificara también aquí, al leer quedaría doblemente codificada y
+        ``restoreGeometry`` fallaría.
+        """
+        data = bytes(geometry)
+        if not data:
+            return  # ventana oculta o aún no mostrada: no pisa lo guardado
+        self.geometry = data
         self.schedule_save()
 
     # ------------------------------------------------------------ guardado

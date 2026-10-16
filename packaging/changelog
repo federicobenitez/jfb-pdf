@@ -1,3 +1,21 @@
+jfbpdf (1.1.0) unstable; urgency=medium
+
+  * Búsqueda de texto con resaltados, contador y navegación (Ctrl+F, F3,
+    Shift+F3).
+  * Panel lateral con índice del documento y miniaturas (F9).
+  * Rotación global de la vista (Ctrl+R / Ctrl+Shift+R) e inversión de
+    colores (Ctrl+I).
+  * Modo presentación (F5), impresión (Ctrl+P) y menú de documentos
+    recientes.
+  * Ajuste continuo de ancho/página y zoom con Ctrl+rueda anclado en el
+    cursor; render nítido en pantallas HiDPI.
+  * Estado persistente en XDG con escritura atómica y diferida.
+  * Correcciones: atajos Home/End duplicados, caché que descartaba la
+    página visible, cierre seguro del hilo de render, restauración de la
+    última página y apertura de documentos protegidos.
+
+ -- Federico Benitez <benitez.federico@gmail.com>  Fri, 16 Oct 2026 10:00:00 -0300
+
 jfbpdf (1.0.0) unstable; urgency=medium
 
   * Versión inicial: lector de PDF con desplazamiento suave, zoom y

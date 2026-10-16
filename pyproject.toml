@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jfbpdf"
+description = "Lector de PDF ligero para Debian (PySide6 + PyMuPDF)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Federico Benitez", email = "benitez.federico@gmail.com" }]
+dynamic = ["version"]
+dependencies = ["PySide6", "PyMuPDF"]
+
+[project.optional-dependencies]
+# La impresión necesita QtPrintSupport (python3-pyside6.qtprintsupport en Debian).
+print = ["PySide6"]
+dev = ["ruff"]
+
+[project.scripts]
+jfbpdf = "jfbpdf.app:main"
+
+[tool.setuptools]
+packages = ["jfbpdf"]
+
+[tool.setuptools.dynamic]
+version = { attr = "jfbpdf.version.VERSION" }
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+exclude = ["deb", "packaging"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

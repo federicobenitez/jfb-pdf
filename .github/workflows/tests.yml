@@ -1,0 +1,29 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar dependencias del sistema
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-pyside6.qtcore \
+            python3-pyside6.qtgui \
+            python3-pyside6.qtwidgets \
+            python3-pymupdf
+
+      - name: Suite de tests (offscreen)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python3 -m unittest discover -s tests -t . -v
+
+      - name: Verificación interna
+        run: python3 -m jfbpdf --self-test

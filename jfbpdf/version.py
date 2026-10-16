@@ -7,7 +7,7 @@ principal y el empaquetado .deb.
 
 APP_NAME = "JFB Pdf"
 APP_ID = "jfbpdf"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 AUTHOR_NAME = "Federico Benitez"
 AUTHOR_EMAIL = "benitez.federico@gmail.com"

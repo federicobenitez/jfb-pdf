@@ -1,12 +1,14 @@
 [Desktop Entry]
 Type=Application
-Name=JFB-PDF
+Name=JFB Pdf
 GenericName=Lector de PDF
-Comment=Lector de PDF ligero con desplazamiento suave
+Comment=Lector de PDF ligero con desplazamiento suave y búsqueda de texto
 Exec=jfbpdf %F
+TryExec=jfbpdf
 Icon=jfbpdf
 Terminal=false
 Categories=Graphics;Viewer;
 MimeType=application/pdf;
 Keywords=pdf;viewer;reader;documento;lector;
 StartupNotify=true
+StartupWMClass=jfbpdf

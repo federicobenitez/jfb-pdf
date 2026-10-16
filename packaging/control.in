@@ -1,11 +1,12 @@
 Package: jfbpdf
-Version: 1.0.0
+Version: @VERSION@
 Section: graphics
 Priority: optional
 Architecture: all
 Maintainer: Federico Benitez <benitez.federico@gmail.com>
 Depends: python3, python3-pyside6.qtcore, python3-pyside6.qtgui, python3-pyside6.qtwidgets, python3-pymupdf
+Recommends: python3-pyside6.qtprintsupport
 Description: Lector de PDF ligero para Debian
  JFB Pdf es un lector de PDF ligero y rápido con desplazamiento suave,
- zoom y navegación por páginas, desarrollado en Python con PySide6 y
- PyMuPDF.
+ zoom, búsqueda de texto con resaltados, índice, miniaturas, rotación e
+ inversión de colores, desarrollado en Python con PySide6 y PyMuPDF.
